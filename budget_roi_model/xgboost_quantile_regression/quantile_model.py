@@ -8,9 +8,11 @@ def train_quantile_model(X, y, alpha, params=None):
             "eval_metric": "mae",
             "max_depth": 6,
             "learning_rate": 0.1,
-            "alpha": alpha,  # 关键参数！
+            "quantile_alpha": alpha,  # 关键参数！
         }
 
     dtrain = xgb.DMatrix(X, label=y)
     model = xgb.train(params, dtrain, num_boost_round=300)
     return model
+
+# https://xgboost.readthedocs.io/en/stable/python/examples/quantile_regression.html
