@@ -11,6 +11,14 @@
 # 季度特征（quarter）：通过 time 字段提取季度信息作为周期性特征。
 # 移动平均 ROI（roi_ma_N）：按 segment 分组后添加滑动窗口平均历史 ROI
 
+# 加入节假日特征（如是否为美国假期）；
+# 加入时间差分特征（每个 segment 的时间间隔）；
+# 所有时间特征、滚动窗口、季度等特征也一并整合进模型输入
+
+# 是否为周末 (is_weekend)
+# 营销活动周期 (campaign_period，占位符字段)
+# 行业事件标志 (industry_event，占位符字段)
+
 
 import torch
 import numpy as np
@@ -19,6 +27,7 @@ from typing import Callable, Dict, List
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.preprocessing import OneHotEncoder
 from scipy.optimize import minimize
+import holidays
 
 class ROIModelGBDT:
     def __init__(self, df: pd.DataFrame, feature_cols: List[str] = ["segment", "budget"], time_col: str = "time", history_window: int = 3):
@@ -37,10 +46,24 @@ class ROIModelGBDT:
             # Add cyclic time features (e.g., quarter)
             self.df["quarter"] = pd.to_datetime(self.df[time_col]).dt.quarter.astype(str)
 
+            # Add holiday flag (assumes US holidays, customize as needed)
+            us_holidays = holidays.UnitedStates()
+            self.df["is_holiday"] = pd.to_datetime(self.df[time_col]).isin(us_holidays).astype(int)
+
+            # Add time difference from previous record per segment
+            self.df["time_diff"] = self.df.groupby("segment")[time_col].transform(lambda x: pd.to_datetime(x).diff().dt.days.fillna(0))
+
+            # Add weekend flag
+            self.df["is_weekend"] = pd.to_datetime(self.df[time_col]).dt.weekday.isin([5, 6]).astype(int)
+
+            # Add placeholder for campaign cycle or industry events (to be customized)
+            self.df["campaign_period"] = 0  # can be replaced by real campaign mappings
+            self.df["industry_event"] = 0   # can be replaced by real event flags
+
             self.df = self.df.dropna().reset_index(drop=True)
             self.feature_cols += [f"roi_lag_{i}" for i in range(1, history_window + 1)]
             self.feature_cols.append(f"roi_ma_{history_window}")
-            self.feature_cols.append("quarter")
+            self.feature_cols += ["quarter", "is_holiday", "time_diff", "is_weekend", "campaign_period", "industry_event"]
 
         # Handle categorical encoding
         categorical_cols = [col for col in self.feature_cols if df[col].dtype == 'object' or col == 'quarter']
