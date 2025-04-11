@@ -8,6 +8,10 @@
 # 动态默认特征：在构造 ROI 函数时可传入默认值，如最近一次历史 ROI 等
 
 
+# 季度特征（quarter）：通过 time 字段提取季度信息作为周期性特征。
+# 移动平均 ROI（roi_ma_N）：按 segment 分组后添加滑动窗口平均历史 ROI
+
+
 import torch
 import numpy as np
 import pandas as pd
@@ -28,11 +32,18 @@ class ROIModelGBDT:
             self.df = self.df.sort_values(by=["segment", time_col])
             for i in range(1, history_window + 1):
                 self.df[f"roi_lag_{i}"] = self.df.groupby("segment")["roi"].shift(i)
+            self.df[f"roi_ma_{history_window}"] = self.df.groupby("segment")["roi"].transform(lambda x: x.shift(1).rolling(history_window).mean())
+
+            # Add cyclic time features (e.g., quarter)
+            self.df["quarter"] = pd.to_datetime(self.df[time_col]).dt.quarter.astype(str)
+
             self.df = self.df.dropna().reset_index(drop=True)
             self.feature_cols += [f"roi_lag_{i}" for i in range(1, history_window + 1)]
+            self.feature_cols.append(f"roi_ma_{history_window}")
+            self.feature_cols.append("quarter")
 
         # Handle categorical encoding
-        categorical_cols = [col for col in self.feature_cols if df[col].dtype == 'object']
+        categorical_cols = [col for col in self.feature_cols if df[col].dtype == 'object' or col == 'quarter']
         self.encoder = OneHotEncoder(sparse=False, handle_unknown='ignore')
         self.encoder.fit(self.df[categorical_cols])
 
