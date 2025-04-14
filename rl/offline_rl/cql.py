@@ -60,11 +60,34 @@ cql.save_model("cql_ads_budget_model.pt")
 # 🧪 使用训练好的策略
 
 
-# 模拟一个新 segment 的状态输入
-sample_state = np.array([[1.2, 1.5, 1.8, 0.03, 0.12, 10000, 0, 5]])  # 注意平台和 geo 要映射
-sample_state = scaler.transform(sample_state)
+# 构造一个测试样本
+test_row = {
+    'roi_p10': 1.2,
+    'roi_p50': 1.5,
+    'roi_p90': 1.8,
+    'cvr': 0.03,
+    'ctr': 0.12,
+    'prev_spend': 10000,
+    'platform_id': 0,  # 例如 Facebook
+    'geo_id': 5        # 例如 UK
+}
 
-# 推理建议的 budget（归一化值）
-predicted_budget = cql.predict(sample_state)[0][0]
-print("Recommended budget (normalized):", predicted_budget)
+# 数值特征标准化
+numeric_part = np.array([[test_row[f] for f in numeric_features]], dtype=np.float32)
+numeric_scaled = scaler.transform(numeric_part)
+
+# one-hot 编码
+platform_onehot = np.zeros((1, platform_onehot.shape[1]), dtype=np.float32)
+platform_onehot[0, test_row['platform_id']] = 1.0
+
+geo_onehot = np.zeros((1, geo_onehot.shape[1]), dtype=np.float32)
+geo_onehot[0, test_row['geo_id']] = 1.0
+
+# 拼接成完整 state
+state = np.concatenate([numeric_scaled, platform_onehot, geo_onehot], axis=1)
+
+# 预测预算（归一化值）
+pred_action = cql.predict(state)[0][0]
+print("Predicted normalized budget:", pred_action)
+
 
