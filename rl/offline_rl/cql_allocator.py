@@ -58,6 +58,15 @@ class QuarterBudgetAllocator:
         return reward
 
 
+# 例如按历史 ROI 平均分配预算的简单规则：
+def rule_based_allocation(segment_df, total_budget):
+    df = segment_df.copy()
+    df["score"] = df["roi_p50"]  # 或 roi_mean
+    df["allocated_budget"] = (df["score"] / df["score"].sum()) * total_budget
+    return df
+
+
+
 ==================================
 
 # 1. 预加载 scaler
