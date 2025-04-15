@@ -91,6 +91,55 @@ class QuantileAllocator:
 
 
 # ---------------------------
+
+
+class CEMAllocator:
+    def __init__(self, roi_predictor, scaler, n_samples=1000, elite_frac=0.1, n_iter=10):
+        self.roi_predictor = roi_predictor  # quantile model or any ROI simulator
+        self.scaler = scaler
+        self.n_samples = n_samples
+        self.elite_frac = elite_frac
+        self.n_iter = n_iter
+
+    def evaluate_allocation(self, df, weights):
+        df = df.copy()
+        df['sim_allocated'] = weights * df['max_budget']  # optional constraint
+        features = [
+            'platform_id', 'geo_id', 'ctr', 'cvr', 'prev_spend',
+            'cumulative_spend', 'time_index'
+        ]
+        X = df[features].astype(float)
+        X_scaled = self.scaler.transform(X)
+        roi_preds = self.roi_predictor.predict(X_scaled)[0.5]  # use P50 or mean ROI
+        total_roi = np.sum(roi_preds * df['sim_allocated'])
+        return total_roi
+
+    def run(self, segment_df, total_budget):
+        n_segments = len(segment_df)
+        mu = np.ones(n_segments) / n_segments
+        sigma = 0.1 * np.ones(n_segments)
+
+        for _ in range(self.n_iter):
+            samples = np.random.normal(loc=mu, scale=sigma, size=(self.n_samples, n_segments))
+            samples = np.abs(samples)
+            samples = samples / samples.sum(axis=1, keepdims=True)
+
+            rewards = np.array([
+                self.evaluate_allocation(segment_df, w) for w in samples
+            ])
+
+            elite_idx = rewards.argsort()[-int(self.n_samples * self.elite_frac):]
+            elite_samples = samples[elite_idx]
+
+            mu = elite_samples.mean(axis=0)
+            sigma = elite_samples.std(axis=0)
+
+        final_weights = mu / mu.sum()
+        segment_df['allocated_budget'] = final_weights * total_budget
+        return segment_df
+
+
+# ---------------------------
 # Example Integration
 # ---------------------------
 if __name__ == '__main__':
