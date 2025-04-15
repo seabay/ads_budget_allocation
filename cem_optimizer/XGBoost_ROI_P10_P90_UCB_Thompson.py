@@ -46,6 +46,49 @@ def thompson_sampling_scores(p10, p50, p90):
     samples = np.random.normal(loc=p50, scale=(p90 - p10) / 2)
     return samples
 
+# ---------------------------
+
+class QuantileAllocator:
+    def __init__(self, quantile_model, scaler, exploration="ucb", alpha=0.3):
+        self.model = quantile_model
+        self.scaler = scaler
+        self.exploration = exploration  # 'ucb' or 'thompson'
+        self.alpha = alpha
+
+    def predict_roi_quantiles(self, segment_df):
+        features = [
+            'platform_id', 'geo_id', 'ctr', 'cvr', 'prev_spend',
+            'cumulative_spend', 'time_index'
+        ]
+        X = segment_df[features].astype(float)
+        X_scaled = self.scaler.transform(X)
+        preds = self.model.predict(X_scaled)
+        segment_df['roi_p10'] = preds[0.1]
+        segment_df['roi_p50'] = preds[0.5]
+        segment_df['roi_p90'] = preds[0.9]
+        return segment_df
+
+    def compute_scores(self, df):
+        if self.exploration == 'ucb':
+            df['score'] = df['roi_p50'] + self.alpha * (df['roi_p90'] - df['roi_p10'])
+        elif self.exploration == 'thompson':
+            sigma = (df['roi_p90'] - df['roi_p10']) / 2
+            sampled = np.random.normal(df['roi_p50'], sigma)
+            df['score'] = sampled
+        else:
+            df['score'] = df['roi_p50']  # default baseline
+        return df
+
+    def allocate_budget(self, df, total_budget):
+        df['allocated_budget'] = (df['score'] / df['score'].sum()) * total_budget
+        return df
+
+    def run(self, segment_df, total_budget):
+        df = self.predict_roi_quantiles(segment_df.copy())
+        df = self.compute_scores(df)
+        df = self.allocate_budget(df, total_budget)
+        return df
+
 
 # ---------------------------
 # Example Integration
