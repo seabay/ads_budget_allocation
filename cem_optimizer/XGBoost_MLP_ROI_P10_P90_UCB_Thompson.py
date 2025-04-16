@@ -36,6 +36,64 @@ class QuantileROIModel:
         return torch.tensor(df_preds.values, dtype=torch.float32)
 
 
+class MLPQuantileROIModel(nn.Module):
+    def __init__(self, input_dim):
+        super().__init__()
+        self.shared = nn.Sequential(
+            nn.Linear(input_dim, 64),
+            nn.ReLU(),
+            nn.Linear(64, 64),
+            nn.ReLU()
+        )
+        self.q10_head = nn.Linear(64, 1)
+        self.q50_head = nn.Linear(64, 1)
+        self.q90_head = nn.Linear(64, 1)
+
+    def forward(self, x):
+        x = self.shared(x)
+        return {
+            0.1: self.q10_head(x).squeeze(-1),
+            0.5: self.q50_head(x).squeeze(-1),
+            0.9: self.q90_head(x).squeeze(-1),
+        }
+
+
+def quantile_loss(pred, target, q):
+    e = target - pred
+    return torch.max((q - 1) * e, q * e).mean()
+
+
+def train_mlp_quantile_model(model, X_train, y_train, epochs=100, batch_size=64, lr=1e-3):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    model.train()
+
+    X_tensor = torch.tensor(X_train, dtype=torch.float32)
+    y_tensor = torch.tensor(y_train, dtype=torch.float32)
+    dataset = TensorDataset(X_tensor, y_tensor)
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+    for epoch in range(epochs):
+        total_loss = 0.0
+        for xb, yb in loader:
+            xb, yb = xb.to(device), yb.to(device)
+            preds = model(xb)
+            loss = (
+                quantile_loss(preds[0.1], yb, 0.1) +
+                quantile_loss(preds[0.5], yb, 0.5) +
+                quantile_loss(preds[0.9], yb, 0.9)
+            )
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item()
+        if epoch % 10 == 0:
+            print(f"Epoch {epoch} Loss: {total_loss:.4f}")
+    return model
+
+
 # ---------------------------
 # Example UCB/TS Action Selection using Quantile ROI Model
 # ---------------------------
