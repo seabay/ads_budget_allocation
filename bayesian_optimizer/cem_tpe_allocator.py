@@ -91,6 +91,129 @@ class TPEBudgetAllocator:
         })
 
 
+class OptunaTPEBudgetAllocator:
+    def __init__(self, roi_predictor, budget, n_trials=100):
+        self.roi_predictor = roi_predictor
+        self.budget = budget
+        self.n_trials = n_trials
+
+    def _construct_features(self, df):
+        return df.drop(columns=['alloc'], errors='ignore').assign(spend=df['alloc'])
+
+    def allocate(self, segment_df):
+        n_segments = len(segment_df)
+
+        def objective(trial):
+            weights = np.array([trial.suggest_float(f'seg_{i}', 0.01, 1.0) for i in range(n_segments)])
+            alloc = (weights / weights.sum()) * self.budget
+            segment_df['alloc'] = alloc
+            features = self._construct_features(segment_df)
+            preds = self.roi_predictor.predict(features)
+            return -preds.mean()
+
+        study = optuna.create_study(direction="minimize")
+        study.optimize(objective, n_trials=self.n_trials)
+
+        best_weights = np.array([study.best_trial.params[f'seg_{i}'] for i in range(n_segments)])
+        final_alloc = (best_weights / best_weights.sum()) * self.budget
+
+        return pd.DataFrame({
+            'segment_id': segment_df['segment_id'],
+            'allocated_budget': final_alloc
+        })
+
+from concurrent.futures import ThreadPoolExecutor
+import optuna
+
+class OptunaTPEBudgetAllocator:
+    def __init__(self, roi_predictor, budget, n_trials=100, n_jobs=4):
+        self.roi_predictor = roi_predictor
+        self.budget = budget
+        self.n_trials = n_trials
+        self.n_jobs = n_jobs
+
+    def _construct_features(self, df):
+        return df.drop(columns=['alloc'], errors='ignore').assign(spend=df['alloc'])
+
+    def allocate(self, segment_df):
+        n_segments = len(segment_df)
+
+        def objective(trial):
+            weights = np.array([trial.suggest_float(f'seg_{i}', 0.01, 1.0) for i in range(n_segments)])
+            alloc = (weights / weights.sum()) * self.budget
+            segment_df['alloc'] = alloc
+            features = self._construct_features(segment_df)
+            preds = self.roi_predictor.predict(features)
+            return -preds.mean()
+
+        study = optuna.create_study(direction="minimize", sampler=optuna.samplers.TPESampler())
+
+        def run_trials(n_trials_per_job):
+            study.optimize(objective, n_trials=n_trials_per_job)
+
+        trials_per_job = self.n_trials // self.n_jobs
+
+        with ThreadPoolExecutor(max_workers=self.n_jobs) as executor:
+            futures = [executor.submit(run_trials, trials_per_job) for _ in range(self.n_jobs)]
+            for f in futures:
+                f.result()  # wait for completion
+
+        best_weights = np.array([study.best_trial.params[f'seg_{i}'] for i in range(n_segments)])
+        final_alloc = (best_weights / best_weights.sum()) * self.budget
+
+        return pd.DataFrame({
+            'segment_id': segment_df['segment_id'],
+            'allocated_budget': final_alloc
+        })
+
+# Optuna 的分布式执行（RDB backend），
+# 你只需要设置一个共享的数据库（如 SQLite 或 MySQL）作为 study 的后端。
+# 这样多个进程或机器就能并发运行同一个 study
+class OptunaTPEBudgetAllocator:
+    def __init__(self, roi_predictor, budget, n_trials=100, storage=None, study_name=None, load_if_exists=True):
+        self.roi_predictor = roi_predictor
+        self.budget = budget
+        self.n_trials = n_trials
+        self.storage = storage
+        self.study_name = study_name
+        self.load_if_exists = load_if_exists
+
+    def _construct_features(self, df):
+        return df.drop(columns=['alloc'], errors='ignore').assign(spend=df['alloc'])
+
+    def allocate(self, segment_df):
+        n_segments = len(segment_df)
+
+        def objective(trial):
+            weights = np.array([trial.suggest_float(f'seg_{i}', 0.01, 1.0) for i in range(n_segments)])
+            alloc = (weights / weights.sum()) * self.budget
+            segment_df['alloc'] = alloc
+            features = self._construct_features(segment_df)
+            preds = self.roi_predictor.predict(features)
+            return -preds.mean()
+
+        if self.storage:
+            study = optuna.create_study(
+                study_name=self.study_name,
+                direction="minimize",
+                storage=self.storage,
+                load_if_exists=self.load_if_exists
+            )
+        else:
+            study = optuna.create_study(direction="minimize")
+
+        study.optimize(objective, n_trials=self.n_trials)
+
+        best_weights = np.array([study.best_trial.params[f'seg_{i}'] for i in range(n_segments)])
+        final_alloc = (best_weights / best_weights.sum()) * self.budget
+
+        return pd.DataFrame({
+            'segment_id': segment_df['segment_id'],
+            'allocated_budget': final_alloc
+        })
+
+
+
 # 示例调用
 # cem_allocator = CEMBudgetAllocator(roi_predictor=model, budget=10000)
 # tpe_allocator = TPEBudgetAllocator(roi_predictor=model, budget=10000)
