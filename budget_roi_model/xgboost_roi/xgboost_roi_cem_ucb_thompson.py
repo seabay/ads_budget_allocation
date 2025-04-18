@@ -127,14 +127,45 @@ if __name__ == '__main__':
 
 # ===================================================
 
+
 import numpy as np
 import pandas as pd
 import xgboost as xgb
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import OneHotEncoder
 import torch
 
-# Step 1: 训练 XGBoost 模型
+# Step 1: 构造 XGBoost 数据集（含 channel 和 geo 特征）
+def construct_xgb_dataset(df, feature_cols, target_col, window_size=7, horizon=3):
+    df = df.copy()
+    df['roi'] = (
+        df.groupby('segment_id')['registers']
+          .transform(lambda x: x.shift(-horizon + 1).rolling(window=horizon).sum())
+    )
+
+    df['date'] = pd.to_datetime(df['date'])
+    df['dayofweek'] = df['date'].dt.dayofweek / 6.0
+    df['weekofyear'] = df['date'].dt.isocalendar().week / 52.0
+    df['month'] = df['date'].dt.month / 12.0
+
+    feature_cols += ['dayofweek', 'weekofyear', 'month']
+
+    encoder = pd.get_dummies(df[['channel', 'geo']])
+    df = pd.concat([df, encoder], axis=1)
+    feature_cols += list(encoder.columns)
+
+    features, targets = [], []
+    for segment_id in df['segment_id'].unique():
+        df_seg = df[df['segment_id'] == segment_id].sort_values('date')
+        for i in range(len(df_seg) - window_size - horizon):
+            x = df_seg.iloc[i:i+window_size][feature_cols].values.mean(axis=0)
+            y = df_seg.iloc[i+window_size:i+window_size+horizon][target_col].mean()
+            features.append(x)
+            targets.append(y)
+
+    return np.array(features), np.array(targets)
+
+
+# Step 2: 训练 XGBoost 模型
 def train_xgboost_model(df, feature_cols, target_col, window_size=7, horizon=3):
     features, targets = construct_xgb_dataset(df, feature_cols, target_col, window_size, horizon)
     X_train, X_val, y_train, y_val = train_test_split(features, targets, test_size=0.2, random_state=42)
@@ -142,13 +173,13 @@ def train_xgboost_model(df, feature_cols, target_col, window_size=7, horizon=3):
     model = xgb.XGBRegressor(objective='reg:squarederror', n_estimators=100, max_depth=6, learning_rate=0.1)
     model.fit(X_train, y_train)
 
-    # Evaluate model performance on validation set
     val_preds = model.predict(X_val)
     val_mse = np.mean((val_preds - y_val) ** 2)
     print(f"Validation MSE: {val_mse:.4f}")
     return model
 
-# Step 2: CEM Allocator
+
+# Step 3: CEM Allocator
 class CEMAllocator:
     def __init__(self, model, num_segments, horizon, pop_size=100, elite_frac=0.2, n_iters=10):
         self.model = model
@@ -170,7 +201,7 @@ class CEMAllocator:
             rewards = []
             for alloc in samples:
                 roi_pred = self._simulate_roi(alloc, recent_features)
-                rewards.append(roi_pred.mean())
+                rewards.append(roi_pred)
 
             elite_idx = np.argsort(rewards)[-int(self.pop_size * self.elite_frac):]
             elite = samples[elite_idx]
@@ -184,7 +215,8 @@ class CEMAllocator:
         weighted_roi = (preds * allocation).sum()
         return weighted_roi
 
-# Step 3: UCB Allocator
+
+# Step 4: UCB Agent
 class UCBAgent:
     def __init__(self, model, c=1.0):
         self.model = model
@@ -207,7 +239,8 @@ class UCBAgent:
         self.roi_means = (self.roi_means * (self.counts - 1) + means) / self.counts
         return allocation
 
-# Step 4: Thompson Sampling Allocator
+
+# Step 5: Thompson Sampling
 class ThompsonSamplingAgent:
     def __init__(self, model):
         self.model = model
@@ -220,37 +253,42 @@ class ThompsonSamplingAgent:
         return allocation
 
 
-# Step 5: 使用上述策略进行优化
+# Step 6: 运行优化流程
 def run_optimization(df, feature_cols, target_col, window_size=7, horizon=3):
-    # Step 5.1: 训练 XGBoost 模型
     model = train_xgboost_model(df, feature_cols, target_col, window_size, horizon)
 
-    # Step 5.2: 获取 recent_features
-    # 在实际使用时，recent_features 可能来自于当前的业务数据
-    recent_features = df[feature_cols].values[-window_size:]
+    segment_ids = df['segment_id'].unique()
+    recent_features = []
+    # recent_features 是通过对每个 segment_id 的最近 window_size 天的特征数据取平均得到
+    for seg_id in segment_ids:
+        df_seg = df[df['segment_id'] == seg_id].sort_values('date')
+        if len(df_seg) >= window_size:
+            x = df_seg.iloc[-window_size:][feature_cols].values.mean(axis=0)
+            recent_features.append(x)
+    recent_features = np.stack(recent_features)
+    # (num_segments, feature_dim)
+    # num_segments：等于 segment 的数量，例如 45（3 个 channel × 15 个 geo）
+    # feature_dim：等于处理后的特征维度，包含：
+    #     原始的 feature_cols（例如：spend, ctr, cvr）
+    #     时间特征（dayofweek, weekofyear, month）
+    #     one-hot 编码的 channel 和 geo 列
 
-    # Step 5.3: CEM Optimization
+
     cem = CEMAllocator(model, num_segments=recent_features.shape[0], horizon=horizon)
     best_alloc_cem = cem.optimize(recent_features)
     print("[CEM] Optimized allocation:", best_alloc_cem)
 
-    # Step 5.4: UCB Optimization
     ucb_agent = UCBAgent(model)
     best_alloc_ucb = ucb_agent.select(recent_features)
     print("[UCB] Optimized allocation:", best_alloc_ucb)
 
-    # Step 5.5: Thompson Sampling Optimization
     ts_agent = ThompsonSamplingAgent(model)
     best_alloc_ts = ts_agent.select(recent_features)
     print("[Thompson Sampling] Optimized allocation:", best_alloc_ts)
 
 
-# 示例：运行优化流程
 if __name__ == '__main__':
-    df = pd.read_csv("your_data.csv")  # 假设你的数据已经加载到 DataFrame 中
+    df = pd.read_csv("your_data.csv")
     feature_cols = ['spend', 'ctr', 'cvr']
     target_col = 'roi'
-
     run_optimization(df, feature_cols, target_col, window_size=7, horizon=7)
-
-
