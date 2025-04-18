@@ -31,11 +31,15 @@ def construct_xgb_dataset(df, feature_cols, target_col, window_size=7, horizon=3
     df['weekofyear'] = df['date'].dt.isocalendar().week / 52.0
     df['month'] = df['date'].dt.month / 12.0
 
+    # ✅ 新增特征三：季节性（seasonality）
+    # 使用正弦/余弦编码表示日/周/月周期
     df['dow_sin'] = np.sin(2 * np.pi * df['dayofweek'])
     df['dow_cos'] = np.cos(2 * np.pi * df['dayofweek'])
     df['month_sin'] = np.sin(2 * np.pi * df['month'])
     df['month_cos'] = np.cos(2 * np.pi * df['month'])
 
+    # spend_cumsum：每个 segment 的历史累计 spend（归一化处理）
+    # 捕捉一个 segment 在长期投放中的状态，比如热度、预算消耗阶段等
     df['spend_cumsum'] = df.groupby('segment_id')['spend'].cumsum()
     df['spend_cumsum'] = df.groupby('segment_id')['spend_cumsum'].transform(lambda x: x / (x.max() + 1e-5))
 
@@ -59,9 +63,11 @@ def construct_xgb_dataset(df, feature_cols, target_col, window_size=7, horizon=3
             window = arr[i:i+window_size, :-1]
             decay_weights = 0.95 ** np.arange(window_size)[::-1]
             decay_weights /= decay_weights.sum()
+            # 时间衰减
             weighted_mean = (window * decay_weights[:, None]).sum(axis=0)
             window_std = window.std(axis=0)
             window_diff = window[-1] - window[0]
+            # spend_trend, ctr_trend, cvr_trend：窗口中首尾差值除以长度，衡量上升/下降趋势
             trend = window_diff / (window_size + 1e-5)
             x = np.concatenate([weighted_mean, window_std, trend])
             y = arr[i+window_size:i+window_size+horizon, -1].mean()
