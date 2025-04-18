@@ -140,6 +140,26 @@ class ThompsonSamplingAgent:
         allocation = samples / samples.sum()
         return allocation
 
+# recent_features 输入结构：这是一个形状为 [num_segments, window_size, num_features] 的数组，每一行是一个 segment 最近的时间窗口特征。
+# 示例形状可能为 [45, 7, 6]（45 个 segment，7 天窗口，6 个特征
+# 通过对每个 segment 的 ROI 预测均值和标准差生成一个正态采样值，模拟 Thompson Sampling 中的“贝叶斯后验不确定性”，preds.mean(axis=1) 表示对 horizon 维度的预测结果取平均，
+# 如果 horizon=7，那么 .mean(axis=1) 就是对 7 天的预测取平均值。
+
+def aggregate_roi(preds, method='mean', weights=None):
+    if method == 'mean':
+        return preds.mean(axis=1)
+    elif method == 'sum':
+        return preds.sum(axis=1)
+    elif method == 'weighted':
+        weights = weights or np.linspace(1.0, 0.5, preds.shape[1])
+        return (preds * weights).sum(axis=1) / weights.sum()
+    elif method == 'early':
+        return preds[:, :3].mean(axis=1)
+    else:
+        raise ValueError("Unsupported aggregation method")
+
+
+
 
 if __name__ == '__main__':
     df = pd.read_csv("your_data.csv")
