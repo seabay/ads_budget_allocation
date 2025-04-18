@@ -1,4 +1,13 @@
 
+# df['roi'] = (
+#     df.groupby('segment_id')['registers']
+#       .transform(lambda x: x.shift(-horizon + 1).rolling(window=horizon).sum())
+# )
+# [1, 2, 3, 4, 5, 6, 7]
+# [sum(1~3), sum(2~4), sum(3~5), sum(4~6), sum(5~7), NaN, NaN]
+# => [6, 9, 12, 15, 18, NaN, NaN]
+
+
 
 def construct_xgb_dataset(df, window_size=7, horizon=7, min_spend_threshold=1.0):
     """
@@ -32,7 +41,7 @@ def construct_xgb_dataset(df, window_size=7, horizon=7, min_spend_threshold=1.0)
         df_seg = df[df['segment_id'] == seg_id].sort_values('date')
         for i in range(len(df_seg) - window_size - horizon):
             window_df = df_seg.iloc[i:i + window_size]
-            future_roi = df_seg.iloc[i + window_size + horizon - 1]['roi']
+            future_roi = df_seg.iloc[i + window_size]['roi']
 
             # 跳过没有 target 的行
             if pd.isna(future_roi):
