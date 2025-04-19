@@ -72,7 +72,7 @@ def construct_xgb_dataset(df, feature_cols, target_col, window_size=7, horizon=3
             y = y_seq.mean()
             features.append(x)
             targets.append(y)
-            residuals.append(y_seq.std())
+            residuals.append(y_seq.std())   #  这里不对，应该是：residuals = actual_roi - predicted_roi
 
     return np.array(features), np.array(targets), np.array(residuals)
 
