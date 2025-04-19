@@ -88,6 +88,12 @@ def train_xgboost_model(df, feature_cols, target_col, window_size=7, horizon=3):
     return model, residual_std_map
 
 
+# 边际效用函数：1 - exp(-alpha * allocation)
+def diminishing_return(roi, alloc, alpha=1.0):
+    utility = roi * (1 - np.exp(-alpha * alloc))
+    return utility
+
+
 # Step 3: CEM Allocator
 class CEMAllocator:
     def __init__(self, model, num_segments, horizon, pop_size=100, elite_frac=0.2, n_iters=10):
@@ -130,6 +136,11 @@ class CEMAllocator:
         risk = np.sqrt(((preds - preds.mean()) ** 2 * allocation).sum())
         score = mean_roi - self.risk_lambda * risk  # 风险调整目标函数
         return score
+
+    def _simulate_roi(self, allocation, recent_features):
+        preds = self.model.predict(recent_features)
+        utility = diminishing_return(preds, allocation, alpha=self.alpha)
+        return utility.sum()
 
 
 
@@ -178,6 +189,15 @@ class ThompsonSamplingAgent:
         samples -= self.risk_lambda * np.std(preds)  # 风险调整
         allocation = samples / samples.sum()
         return allocation
+
+    def select(self, recent_features):
+        preds = self.model.predict(recent_features)
+        samples = np.random.normal(loc=preds, scale=np.std(preds))
+        samples = np.maximum(samples, 0)
+        utility = diminishing_return(samples, np.ones_like(samples), alpha=self.alpha)
+        allocation = utility / utility.sum()
+        return allocation
+
 
 
 # Step 6: 运行优化流程
