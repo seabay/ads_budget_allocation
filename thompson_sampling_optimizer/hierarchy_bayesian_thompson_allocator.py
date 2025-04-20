@@ -76,6 +76,7 @@ class HierarchicalBayesianROIModel:
             def make_sampler(mu_samples, sigma_samples):
                 def sampler():
                     idx = np.random.randint(0, len(mu_samples))
+                    # 随机选择 从后验采样的 μ 和 sigma，构建 LogNormal 分布 => 采样 ROI
                     return float(dist.LogNormal(mu_samples[idx], sigma_samples[idx]).sample())
                 return sampler
 
