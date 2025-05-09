@@ -2,6 +2,10 @@
 # 每条 rollout 样本是：(state_0, action_0, discounted_r_total, state_n)
 # 你可以将这个数据集作为额外样本加入到原始 offline dataset 中供 CQL 训练。
 
+假设：
+    已有一个 环境模拟器（如 LSTM），其 predict(state, action) 输出 next_state 和 reward
+    有一个 策略 π(a|s)（如行为策略或当前 actor），可以给定状态采样动作
+想实现 n-step TD rollout：从离线数据开始，扩展未来 n 步，生成新的 (s, a, r, s') 样本
 
 import numpy as np
 
