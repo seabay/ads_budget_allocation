@@ -241,6 +241,83 @@ print("s_{t+1} shape:", s_tp1.shape)
 
 ###########################
 
+# ✅ 多步 rollout + 生成 (s, a, r, s') 数据集
+# 🔁 脚本：LSTM 模拟器 + 多步 rollout
+
+
+import torch
+import torch.nn as nn
+import numpy as np
+
+# 模拟器定义：奖励 + 下一状态预测
+class MultiTaskLSTMEnvModel(nn.Module):
+    def __init__(self, state_dim, action_dim, hidden_dim=128):
+        super().__init__()
+        self.lstm = nn.LSTM(input_size=state_dim + action_dim, hidden_size=hidden_dim, batch_first=True)
+        self.fc_reward = nn.Linear(hidden_dim, 1)
+        self.fc_state = nn.Linear(hidden_dim, state_dim)
+
+    def forward(self, state_seq, action_seq):
+        x = torch.cat([state_seq, action_seq], dim=-1)  # shape: [B, T, D]
+        out, _ = self.lstm(x)
+        h = out[:, -1]  # final hidden state
+        reward = self.fc_reward(h)
+        next_state = self.fc_state(h)
+        return reward, next_state
+
+# 随机策略
+def random_policy(state):
+    return np.random.randn(state.shape[-1])
+
+# 多步 rollout 生成 (s, a, r, s') 数据
+def rollout_multi_step(env_model, policy, state_seq, action_seq, rollout_horizon=5, device="cpu"):
+    env_model.eval()
+    env_model.to(device)
+
+    transitions = []
+
+    state_seq = torch.tensor(state_seq).unsqueeze(0).float().to(device)  # [1, T, D]
+    action_seq = torch.tensor(action_seq).unsqueeze(0).float().to(device)  # [1, T, D]
+
+    for _ in range(rollout_horizon):
+        s_t = state_seq[0, -1].cpu().numpy()  # 当前状态
+        a_t = policy(s_t)                     # 策略生成动作
+        a_t_tensor = torch.tensor(a_t).view(1, 1, -1).float().to(device)
+
+        # 输入模拟器预测
+        r_pred, s_tp1 = env_model(state_seq, torch.cat([action_seq[:, 1:], a_t_tensor], dim=1))
+
+        r_pred = r_pred.item()
+        s_tp1 = s_tp1.detach().cpu().numpy()
+
+        # 存储一个 transition
+        transitions.append((s_t, a_t, r_pred, s_tp1))
+
+        # 更新序列
+        state_seq = torch.cat([state_seq[:, 1:], torch.tensor(s_tp1).view(1, 1, -1).to(device)], dim=1)
+        action_seq = torch.cat([action_seq[:, 1:], a_t_tensor], dim=1)
+
+    return transitions
+
+# 示例：初始化历史序列并 rollout 5 步
+if __name__ == "__main__":
+    state_dim = 45
+    action_dim = 45
+    seq_len = 5
+
+    model = MultiTaskLSTMEnvModel(state_dim, action_dim)
+    state_seq = np.random.randn(seq_len, state_dim)
+    action_seq = np.random.randn(seq_len, action_dim)
+
+    data = rollout_multi_step(model, random_policy, state_seq, action_seq, rollout_horizon=5)
+
+    for i, (s, a, r, sp) in enumerate(data):
+        print(f"Step {i}: r={r:.3f}, s→s' ∆={np.linalg.norm(sp - s):.3f}")
+
+
+
+###########################
+
 # Rollout 数据接入 CQL 模型的训练流程
 
 import numpy as np
