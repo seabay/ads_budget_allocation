@@ -9,6 +9,15 @@
 
 import numpy as np
 
+# LSTM 模拟器接口
+class LSTMEnvironment:
+    def predict(self, state, action):
+        # 预测下一状态和即时 reward
+        next_state = self.lstm_model.predict_next_state(state, action)
+        reward = self.lstm_model.predict_reward(state, action)
+        return next_state, reward
+
+
 def rollout_n_step(env_model, policy_model, init_dataset, n_step=3, gamma=0.99):
     """
     env_model: 环境模型，输入 state 和 action，输出 next_state, reward
