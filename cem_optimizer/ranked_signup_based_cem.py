@@ -4,6 +4,12 @@
 
 import numpy as np
 
+def topk_hit_rate(pred, truth, k=10):
+    pred_topk = set(np.argsort(pred)[-k:])
+    truth_topk = set(np.argsort(truth)[-k:])
+    return len(pred_topk & truth_topk) / k
+
+
 def cem_ranking_optimizer(
     predict_fn,
     segments,
@@ -31,9 +37,11 @@ def cem_ranking_optimizer(
 
         # 模型预测 signup，并以排序相关指标为目标
         pred_signups = np.array([predict_fn(b) for b in samples])
-        ranking_scores = np.array([np.argsort(-s).argsort().mean() for s in pred_signups])
-        # ↑ 假设模型能正确排序，高潜力 segment 靠前时评分更高
-
+        # 这一行代码本质是对模型预测的一个“排名打分”的尝试，但实际并不代表 ranking 的好坏
+        # ranking_scores = np.array([np.argsort(-s).argsort().mean() for s in pred_signups])
+        # 替换为真实排序评估指标，以便更准确选择高潜力 segment。
+        ranking_scores = np.array([topk_hit_rate(s, true_signup, k=10) for s in pred_signups])
+   
         # 选择精英样本
         elite_idx = ranking_scores.argsort()[:int(elite_frac * num_samples)]
         elite_samples = samples[elite_idx]
